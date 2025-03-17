@@ -1,7 +1,7 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Literal
-from cbr import get_cbr_currency_rates
+from cbr import get_currency_rates
 
 import os
 import dotenv
@@ -45,5 +45,5 @@ class Car:
         
     def calculate_price_in_rubles(self) -> float:
         # Получаем курсы валют только при необходимости, а не при импорте
-        rates = get_cbr_currency_rates()
+        rates = get_currency_rates()
         return self.price * rates[self.currency]

@@ -1,6 +1,5 @@
 from aiogram import Bot, Dispatcher, Router
-from aiogram.client.default import DefaultBotProperties
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BotCommand, Message
@@ -11,19 +10,29 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 import logging
 from datetime import datetime
 import asyncio
-
 import json
 import os
 from dotenv import load_dotenv
+from redis import Redis
+from database import User, Calculation, get_db, get_db_session
+from contextlib import contextmanager
 
 load_dotenv()
 
-# Создание экземпляра бота с токеном
-bot = Bot(token=os.getenv("TELEGRAM_TOKEN"), default=DefaultBotProperties(parse_mode="HTML"))
-storage = MemoryStorage()
-
 # Настройка базового логирования
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Создание экземпляра бота с токеном
+bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
+
+# Инициализация Redis для хранения состояний
+redis = Redis(
+    host=os.getenv("REDIS_HOST", "redis"),
+    port=int(os.getenv("REDIS_PORT", 6379)),
+    db=int(os.getenv("REDIS_DB", 0))
+)
+storage = RedisStorage(redis=redis)
 
 # Создаем роутер
 router = Router()
@@ -49,45 +58,41 @@ VEHICLE_TYPES = {
     "🛷 Снегоход": "snowmobile"
 }
 
-# Для валют:
+# Обновляем функции создания клавиатур
 def get_currency_keyboard():
     builder = ReplyKeyboardBuilder()
     for curr in CURRENCIES:
         builder.add(KeyboardButton(text=curr))
-    builder.adjust(2)  # по 2 кнопки в ряд
+    builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
-# Для месяцев:
 def get_months_keyboard():
     builder = ReplyKeyboardBuilder()
     for month in MONTHS.keys():
         builder.add(KeyboardButton(text=month))
-    builder.adjust(3)  # по 3 кнопки в ряд
+    builder.adjust(3)
     return builder.as_markup(resize_keyboard=True)
 
-# Для возрастных категорий:
 def get_age_categories_keyboard():
     builder = ReplyKeyboardBuilder()
     for category in AGE_CATEGORIES.keys():
         builder.add(KeyboardButton(text=category))
-    builder.adjust(1)  # по одной кнопке в ряд
+    builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
-# Для типов ТС:
 def get_vehicle_types_keyboard():
     builder = ReplyKeyboardBuilder()
     for vehicle_type in VEHICLE_TYPES.keys():
         builder.add(KeyboardButton(text=vehicle_type))
-    builder.adjust(1)  # по одной кнопке в ряд
+    builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
-# Для кнопок меню:
 def get_main_menu_keyboard():
     builder = ReplyKeyboardBuilder()
     builder.add(KeyboardButton(text="Начать расчет"))
     builder.add(KeyboardButton(text="Информация о компании"))
     builder.add(KeyboardButton(text="Оставить заявку"))
-    builder.adjust(1)  # по одной кнопке в ряд
+    builder.adjust(1)
     return builder.as_markup(resize_keyboard=True)
 
 # валидирующие функции  
@@ -119,23 +124,32 @@ class RequestForm(StatesGroup):
     phone = State()
 
 # Обработчик команды /start
-@router.message(Command(commands=["start"]))
+@router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
-    # Сбрасываем текущее состояние, если оно есть
-    current_state = await state.get_state()
-    if current_state is not None:
-        await state.clear()
-        if current_state.startswith("CarForm"):
-            await message.answer("⚠️ Текущий процесс расчета прерван. Начинаем заново.")
-        elif current_state.startswith("RequestForm"):
-            await message.answer("⚠️ Процесс оформления заявки прерван. Начинаем расчет.")
-    
-    # Показываем приветствие и клавиатуру с кнопками
-    await message.answer(
-        "Привет! Я бот для расчета таможенных платежей.\n\n"
-        "Нажмите кнопку 'Начать расчет', чтобы начать расчет таможенных платежей.",
-        reply_markup=get_main_menu_keyboard()
-    )
+    # Сохраняем пользователя в базу данных
+    try:
+        with get_db_session() as db:
+            # Проверяем, существует ли пользователь
+            existing_user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
+            
+            if not existing_user:
+                # Создаем нового пользователя
+                new_user = User(
+                    telegram_id=message.from_user.id,
+                    username=message.from_user.username or "",
+                    phone=""  # Телефон будет заполнен позже, если потребуется
+                )
+                db.add(new_user)
+                logging.info(f"Добавлен новый пользователь: {message.from_user.id}")
+            else:
+                logging.info(f"Пользователь уже существует: {message.from_user.id}")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении пользователя: {e}")
+        logging.exception("Подробная информация об ошибке:")
+
+    await message.answer(f"Привет, {message.from_user.first_name}! Я бот для расчета таможенных платежей при ввозе автомобилей в Россию.")
+    await message.answer("Выберите тип транспортного средства:", reply_markup=get_vehicle_types_keyboard())
+    await state.set_state(CarForm.vehicle_type)
 
 # Обработчик выбора типа ТС
 @router.message(CarForm.vehicle_type)
@@ -565,7 +579,7 @@ async def text_start_calculation(message: Message, state: FSMContext):
 # Изменим функцию main
 async def main():
     # Создаем диспетчер
-    dp = Dispatcher(storage=storage)
+    dp = Dispatcher()
     
     # Включаем роутер
     dp.include_router(router)
@@ -573,8 +587,7 @@ async def main():
     # Установка команд меню
     await set_commands(bot)
     
-    # Запуск бота
-    print("Бот запущен. Нажмите Ctrl+C для остановки.")
+    # Запуск бота в режиме polling
     await dp.start_polling(bot)
 
 if __name__ == '__main__':

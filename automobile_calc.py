@@ -1,7 +1,5 @@
 from car_mod import Car
-from cbr import get_cbr_currency_rates
-
-rates = get_cbr_currency_rates()
+from cbr import get_currency_rates
 
 # Базовые функции расчета
 def utilisation_fee_calc(car: Car) -> float:
@@ -55,6 +53,7 @@ def customs_fee_electro_calc(price: float) -> float:
     return 30_000.00  # На всякий случай
 
 def customs_duty_regular_calc(car: Car) -> float:
+    rates = get_currency_rates()  # Получаем курсы здесь
     # Структура данных для расчета пошлины в зависимости от возраста
     age_brackets = {
         "<3": {

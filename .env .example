@@ -1,0 +1,10 @@
+CURRENCIES=USD,EUR,CNY,KRW
+TELEGRAM_TOKEN=7463899569:AAE808ZSEkX89880r24wjHPRwIIS81NiZXg
+MONTHS={"Январь":1,"Февраль":2,"Март":3,"Апрель":4,"Май":5,"Июнь":6,"Июль":7,"Август":8,"Сентябрь":9,"Октябрь":10,"Ноябрь":11,"Декабрь":12}
+CURRENCY_CODES={"USD":"R01235","EUR":"R01239","CNY":"R01375","KRW":"R01815"}
+
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0

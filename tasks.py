@@ -1,4 +1,4 @@
-from celery import Celery
+from celery_app import celery_app
 from celery.schedules import crontab
 import xml.etree.ElementTree as ET
 import requests
@@ -17,11 +17,6 @@ redis_client = redis.Redis(
     db=int(os.getenv('REDIS_DB', 0)),
     decode_responses=True
 )
-
-# Настройка Celery
-celery_app = Celery('tasks')
-celery_app.conf.broker_url = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
-celery_app.conf.result_backend = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
 
 # Настройка периодических задач
 celery_app.conf.beat_schedule = {

@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=bot_db
+      - POSTGRES_USER=bot_user
+      - POSTGRES_PASSWORD=bot_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - app-network
+
+  celery-worker:
+    build: .
+    command: celery -A tasks worker --pool=solo --loglevel=INFO
+    env_file:
+      - .env.prod
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    networks:
+      - app-network
+
+  celery-beat:
+    build: .
+    command: celery -A tasks beat --loglevel=INFO
+    env_file:
+      - .env.prod
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+      - celery-worker
+    environment:    
+      - REDIS_HOST=redis
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    networks:
+      - app-network
+
+  bot:
+    build: .
+    command: python main.py
+    env_file:
+      - .env.prod
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+      - celery-worker
+      - celery-beat
+      - postgres
+    environment:
+      - REDIS_HOST=redis
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=bot_db
+      - POSTGRES_USER=bot_user
+      - POSTGRES_PASSWORD=bot_password
+    networks:
+      - app-network
+
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge 
