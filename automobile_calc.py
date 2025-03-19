@@ -1,5 +1,5 @@
 from car_mod import Car
-from cbr import get_currency_rates
+from tasks import get_currency_rates
 
 # Базовые функции расчета
 def utilisation_fee_calc(car: Car) -> float:
@@ -168,10 +168,10 @@ def overall_electro_calc(car: Car) -> dict:
     util_fee = utilisation_fee_calc(car)
     
     # Рассчитываем НДС
-    vax = vax_electro_calc(car, customs_duty, excise_tax)
+    vat = vax_electro_calc(car, customs_duty, excise_tax)
     
     # Рассчитываем общую сумму
-    total = customs_duty + excise_tax + util_fee + customs_fee + vax
+    total = customs_duty + excise_tax + util_fee + customs_fee + vat
     
     # Возвращаем словарь с детализацией платежей
     return {
@@ -180,7 +180,7 @@ def overall_electro_calc(car: Car) -> dict:
         "excise_tax": excise_tax,
         "util_fee": util_fee,
         "customs_fee": customs_fee,
-        "vax": vax
+        "vat": vat
     }
 
 
@@ -196,10 +196,10 @@ def overall_atv_snowmobile_calc(car: Car) -> dict:
     
     
     # Для квадроциклов и снегоходов нет НДС в нашей модели
-    vax = car.rub_price * 0.20
+    vat = car.rub_price * 0.20
     
     # Рассчитываем общую сумму
-    total = customs_duty + customs_fee + util_fee + vax
+    total = customs_duty + customs_fee + util_fee + vat
     
     # Возвращаем словарь с детализацией платежей
     return {
@@ -207,7 +207,7 @@ def overall_atv_snowmobile_calc(car: Car) -> dict:
         "customs_duty": customs_duty, # таможенная пошлина
         "util_fee": util_fee, # утилизационный сбор
         "customs_fee": customs_fee, # таможенный сбор
-        "vax": vax # НДС
+        "vat": vat # НДС
     }
 
 def overall_regular_calc(car: Car) -> dict:
@@ -222,7 +222,7 @@ def overall_regular_calc(car: Car) -> dict:
     
     # Для обычных автомобилей нет акцизного сбора и НДС в нашей модели
     excise_tax = 0
-    vax = 0
+    vat = 0
     
     # Рассчитываем общую сумму
     total = customs_duty + customs_fee + util_fee
@@ -234,7 +234,7 @@ def overall_regular_calc(car: Car) -> dict:
         "excise_tax": excise_tax,
         "util_fee": util_fee,
         "customs_fee": customs_fee,
-        "vax": vax
+        "vat": vat
     }
 
 

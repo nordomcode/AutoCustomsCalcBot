@@ -1,0 +1,18 @@
+-- Создаем админа (bot_user создается через environment)
+CREATE USER admin WITH PASSWORD 'admin_password' SUPERUSER;
+
+-- Подключаемся к базе
+\c bot_db;
+
+-- Даем права bot_user
+GRANT ALL ON ALL TABLES IN SCHEMA public TO bot_user;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO bot_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO bot_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO bot_user;
+
+-- Даем права админу
+GRANT ALL PRIVILEGES ON DATABASE bot_db TO admin;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO admin;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO admin;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO admin;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO admin;

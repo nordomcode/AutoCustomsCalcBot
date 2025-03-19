@@ -1,7 +1,7 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Literal
-from cbr import get_currency_rates
+from tasks import get_currency_rates
 
 import os
 import dotenv

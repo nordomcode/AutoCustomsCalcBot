@@ -1,8 +1,8 @@
 # Виртуальное окружение
-taxbot
+autocalc-venv
 
 #ENV
-.env
+.env.prod
 
 
 

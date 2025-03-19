@@ -14,25 +14,29 @@ import json
 import os
 from dotenv import load_dotenv
 from redis import Redis
-from database import User, Calculation, get_db, get_db_session
+from database import User, Calculation, get_db, Request
 from contextlib import contextmanager
 
 load_dotenv()
 
-# Настройка базового логирования
-logging.basicConfig(level=logging.INFO)
+# Настройка логирования в зависимости от окружения
+if os.getenv('ENVIRONMENT') == 'production':
+    logging.basicConfig(level=logging.WARNING)  # В продакшене логируем только WARNING и выше
+else:
+    logging.basicConfig(level=logging.INFO)     # В разработке можно логировать INFO
+
 logger = logging.getLogger(__name__)
 
 # Создание экземпляра бота с токеном
 bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 
-# Инициализация Redis для хранения состояний
-redis = Redis(
-    host=os.getenv("REDIS_HOST", "redis"),
-    port=int(os.getenv("REDIS_PORT", 6379)),
-    db=int(os.getenv("REDIS_DB", 0))
-)
-storage = RedisStorage(redis=redis)
+# Инициализация Redis для храpfrнения состояний
+# redis = Redis(
+#     host=os.getenv("REDIS_HOST", "redis"),
+#     port=int(os.getenv("REDIS_PORT", 6379)),
+#     db=int(os.getenv("REDIS_DB", 0))
+# )
+# storage = RedisStorage(redis=redis)
 
 # Создаем роутер
 router = Router()
@@ -128,7 +132,7 @@ class RequestForm(StatesGroup):
 async def cmd_start(message: Message, state: FSMContext):
     # Сохраняем пользователя в базу данных
     try:
-        with get_db_session() as db:
+        with get_db() as db:
             # Проверяем, существует ли пользователь
             existing_user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
             
@@ -136,8 +140,7 @@ async def cmd_start(message: Message, state: FSMContext):
                 # Создаем нового пользователя
                 new_user = User(
                     telegram_id=message.from_user.id,
-                    username=message.from_user.username or "",
-                    phone=""  # Телефон будет заполнен позже, если потребуется
+                    username=message.from_user.username or ""
                 )
                 db.add(new_user)
                 logging.info(f"Добавлен новый пользователь: {message.from_user.id}")
@@ -331,96 +334,127 @@ async def process_power(message: Message, state: FSMContext):
     await finalize_calculation(message, state, data)
 
 async def finalize_calculation(message: Message, state: FSMContext, data: dict):
-    # Создаем копию данных для безопасной работы
-    safe_data = data.copy()
-    
-    # Логируем полученные данные для отладки
-    print(f"Данные для расчета: {safe_data}")
-    
-    # Проверяем наличие всех необходимых ключей
-    required_keys = ['price', 'currency', 'age_category', 'vehicle_type', 'engine_type']
-    if safe_data.get('engine_type') in ['electric', 'hybrid']:
-        required_keys.append('power')
-    else:
-        required_keys.append('volume')
-    
-    missing_keys = [key for key in required_keys if key not in safe_data]
-    
-    if missing_keys:
-        await message.answer(
-            f"Не хватает данных для расчета: {', '.join(missing_keys)}. "
-            f"Пожалуйста, начните расчет заново с помощью команды /start"
-        )
-        await state.clear()
-        return
-    
-    # Устанавливаем значения по умолчанию для отсутствующих ключей
-    if 'power' not in safe_data:
-        safe_data['power'] = 0
-    if 'volume' not in safe_data:
-        safe_data['volume'] = 0
-    
-    car = Car(
-        price=safe_data['price'],
-        volume=safe_data['volume'],
-        currency=safe_data['currency'],
-        power=safe_data['power'],
-        age_category=safe_data['age_category'],
-        vehicle_type=safe_data['vehicle_type'],
-        engine_type=safe_data['engine_type']
-    )
-    
-    # Определяем функцию расчета в зависимости от типа ТС и двигателя
-    if safe_data['vehicle_type'] in ['quad', 'snowmobile']:
-        # Для квадроциклов и снегоходов используем специальный расчет
-        fees = overall_atv_snowmobile_calc(car)
-    elif safe_data['engine_type'] in ['electric', 'hybrid']:
-        # Для электромобилей и гибридов используем расчет для электротранспорта
-        fees = overall_electro_calc(car)
-    else:
-        # Для обычных автомобилей используем обычный расчет
-        fees = overall_regular_calc(car)
-    
-    # Получаем названия для отображения
-    age_category_name = next(name for name, code in AGE_CATEGORIES.items() if code == safe_data['age_category'])
-    vehicle_type_name = next(name for name, code in VEHICLE_TYPES.items() if code == safe_data['vehicle_type'])
-    
-    # Базовая информация
-    response = (
-        f"Результаты расчета:\n\n"
-        f"Тип ТС: {vehicle_type_name}\n"
-        f"Стоимость: {car.price} {car.currency}\n"
-        f"Возраст: {age_category_name}\n"
-    )
-    
-    # Добавляем информацию о характеристиках двигателя в зависимости от его типа
-    if safe_data['engine_type'] in ['electric', 'hybrid']:
-        response += f"Мощность двигателя: {car.power} л.с.\n"
-    else:
-        response += f"Объем двигателя: {car.volume} см³\n"
-    
-    response += (
-        f"Стоимость в рублях: {car.rub_price:.2f} ₽\n\n"
-        f"Общая сумма таможенных платежей: {fees['total']:.2f} ₽\n\n"
-        f"<b>Детализация:</b>\n"
-        f"- Таможенная пошлина: {fees['customs_duty']:.2f} ₽\n"
-        f"- Таможенный сбор: {fees['customs_fee']:.2f} ₽\n"
-        f"- Утилизационный сбор: {fees['util_fee']:.2f} ₽\n"
-    )
-    
-    # Добавляем информацию об акцизе и НДС только для электромобилей и гибридов
-    if safe_data['engine_type'] in ['electric', 'hybrid']:
-        response += (
-            f"- Акцизный сбор: {fees['excise_tax']:.2f} ₽\n"
-            f"- НДС: {fees['vax']:.2f} ₽\n"
+    try:
+        safe_data = data.copy()
+        car = Car(
+            price=safe_data['price'],
+            volume=safe_data['volume'],
+            currency=safe_data['currency'],
+            power=safe_data['power'],
+            age_category=safe_data['age_category'],
+            vehicle_type=safe_data['vehicle_type'],
+            engine_type=safe_data['engine_type']
         )
 
-    # После завершения расчета показываем сообщение и клавиатуру с кнопками
-    await message.answer(
-        response + "\n\nИспользуйте команды меню для дальнейших действий.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    await state.clear()
+        # Определяем тип расчета
+        if safe_data['vehicle_type'] in ['quad', 'snowmobile']:
+            fees = overall_atv_snowmobile_calc(car)
+        elif safe_data['engine_type'] in ['electric', 'hybrid']:
+            fees = overall_electro_calc(car)
+        else:
+            fees = overall_regular_calc(car)
+
+        # Проверяем наличие всех необходимых ключей
+        required_keys = ['total', 'customs_duty', 'customs_fee', 'util_fee', 'excise_tax', 'vat']
+        missing_keys = [key for key in required_keys if key not in fees]
+        if missing_keys:
+            logging.error("Отсутствуют обязательные ключи в расчете", extra={
+                'user_id': message.from_user.id,
+                'missing_keys': missing_keys,
+                'calculation_type': safe_data['vehicle_type']
+            })
+            raise KeyError(f"Отсутствуют обязательные ключи: {missing_keys}")
+
+        # Получаем названия для отображения
+        age_category_name = next(name for name, code in AGE_CATEGORIES.items() if code == safe_data['age_category'])
+        vehicle_type_name = next(name for name, code in VEHICLE_TYPES.items() if code == safe_data['vehicle_type'])
+        
+        # Базовая информация
+        response = (
+            f"Результаты расчета:\n\n"
+            f"Тип ТС: {vehicle_type_name}\n"
+            f"Стоимость: {car.price} {car.currency}\n"
+            f"Возраст: {age_category_name}\n"
+        )
+        
+        # Добавляем информацию о характеристиках двигателя в зависимости от его типа
+        if safe_data['engine_type'] in ['electric', 'hybrid']:
+            response += f"Мощность двигателя: {car.power} л.с.\n"
+        else:
+            response += f"Объем двигателя: {car.volume} см³\n"
+        
+        response += (
+            f"Стоимость в рублях: {car.rub_price:.2f} ₽\n\n"
+            f"Общая сумма таможенных платежей: {fees['total']:.2f} ₽\n\n"
+            f"<b>Детализация:</b>\n"
+            f"- Таможенная пошлина: {fees['customs_duty']:.2f} ₽\n"
+            f"- Таможенный сбор: {fees['customs_fee']:.2f} ₽\n"
+            f"- Утилизационный сбор: {fees['util_fee']:.2f} ₽\n"
+        )
+        
+        # Добавляем информацию об акцизе и НДС только для электромобилей и гибридов
+        if safe_data['engine_type'] in ['electric', 'hybrid']:
+            response += (
+                f"- Акцизный сбор: {fees['excise_tax']:.2f} ₽\n"
+                f"- НДС: {fees['vat']:.2f} ₽\n"
+            )
+
+        # После завершения расчета показываем сообщение и клавиатуру с кнопками
+        await message.answer(
+            response + "\n\nИспользуйте команды меню для дальнейших действий.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        await state.clear()
+
+        # Сохраняем результат расчета в базу данных
+        try:
+            with get_db() as db:
+                user = db.query(User).filter(User.telegram_id == message.from_user.id).first()
+                if not user:
+                    user = User(
+                        telegram_id=message.from_user.id,
+                        username=message.from_user.username
+                    )
+                    db.add(user)
+                
+                calculation = Calculation(
+                    telegram_id=message.from_user.id,
+                    vehicle_type=safe_data['vehicle_type'],
+                    engine_type=safe_data['engine_type'],
+                    price=safe_data['price'],
+                    currency=safe_data['currency'],
+                    age_category=safe_data['age_category'],
+                    total_fees=fees['total'],
+                    customs_duty=fees['customs_duty'],
+                    customs_fee=fees['customs_fee'],
+                    util_fee=fees['util_fee'],
+                    excise_tax=fees['excise_tax'],
+                    vat=fees['vat']
+                )
+                db.add(calculation)
+                logging.info("Расчет успешно сохранен", extra={
+                    'user_id': message.from_user.id,
+                    'calculation_id': calculation.id
+                })
+        except Exception as e:
+            logging.error("Ошибка при сохранении расчета", extra={
+                'user_id': message.from_user.id,
+                'error': str(e),
+                'calculation_data': safe_data
+            })
+            await message.answer("Произошла ошибка при сохранении результата расчета. Пожалуйста, попробуйте еще раз или обратитесь к администратору.")
+            await state.clear()
+            return
+
+    except Exception as e:
+        logging.error("Ошибка при расчете", extra={
+            'user_id': message.from_user.id,
+            'error': str(e),
+            'calculation_data': safe_data
+        })
+        await message.answer("Произошла ошибка при расчете. Пожалуйста, попробуйте еще раз или обратитесь к администратору.")
+        await state.clear()
+        return
 
 # Добавим функцию настройки команд меню
 async def set_commands(bot: Bot):
@@ -517,6 +551,20 @@ async def process_phone(message: Message, state: FSMContext):
     # Получаем все данные
     data = await state.get_data()
     
+    # Сохраняем заявку в базу данных
+    try:
+        with get_db() as db:
+            request = Request(
+                telegram_id=message.from_user.id,
+                name=data['name'],
+                phone=data['phone']
+            )
+            db.add(request)
+            logging.info(f"Сохранена заявка от пользователя {message.from_user.id}")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении заявки: {e}")
+        logging.exception("Подробная информация об ошибке:")
+    
     # Выводим сообщение об успешной отправке заявки
     await message.answer(
         f"Спасибо за вашу заявку!\n\n"
@@ -526,9 +574,6 @@ async def process_phone(message: Message, state: FSMContext):
         f"Наши специалисты свяжутся с вами в ближайшее время для консультации по вопросам растаможки.",
         reply_markup=get_main_menu_keyboard()
     )
-    
-    # Логируем данные заявки
-    logging.info(f"Новая заявка: Имя: {data['name']}, Телефон: {data['phone']}")
     
     # Очищаем состояние
     await state.clear()
